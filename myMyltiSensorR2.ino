@@ -1,7 +1,7 @@
 //#define MY_OTA_FIRMWARE_FEATURE
 #define MY_RADIO_NRF24 // Enable and select radio type attached 
 #define MY_RF24_PA_LEVEL RF24_PA_LOW
-#define MY_BAUD_RATE 4800
+#define MY_BAUD_RATE 9600
 #define MY_DEBUG 
 
 #include <MySensors.h>
@@ -40,10 +40,12 @@ MyMessage msgVolts(CHILD_ID_VOLTS, V_VOLTAGE);
 MyMessage msgDiagnostic(254, V_CUSTOM);
 
 
-const long InternalReferenceVoltage = 1080; //1062;  // Adjust this value to your board's specific internal BG voltage
+//const long InternalReferenceVoltage = 1080; //1062;  // Adjust this value to your board's specific internal BG voltage
 
 bool metric = true;
 unsigned long SLEEP_TIME;
+unsigned long scale_constant;
+float temp1cor, temp2cor;
 
 int preMoisture = 111;
 int prebatteryPcnt; //Ground
@@ -51,20 +53,28 @@ float preTemperature1, preTemperature2, preHumidity, prePressure;
 
 
 void presentation() {
-	sendSketchInfo("MyltiSensor 1MHz", "0.4");
+	String myVals;
+
+	SLEEP_TIME = (unsigned long)(loadState(7)) * 10000;
+	scale_constant = ((long)(loadState(2) * 256L) + loadState(1)) * 256 + loadState(0); //112530L;
+	temp1cor = (float)(loadState(5) - 128) / 10;
+	temp2cor = (float)(loadState(6) - 128) / 10;
+
+	myVals = "1|" + String(scale_constant) + "|" + String(temp1cor, 1) + "|" + String(temp2cor, 1) + "|" + SLEEP_TIME;
+
+
+	sendSketchInfo("MyltiSensor 1MHz", "0.5");
 	present(CHILD_ID_TEMP1, S_TEMP, "Ground");
 	present(CHILD_ID_MOISTURE, S_HUM, "Ground");
 	present(CHILD_ID_TEMP2, S_TEMP, "Air");
 	present(CHILD_ID_HUM, S_HUM, "Air");
 	present(CHILD_ID_PRE, S_BARO, "Air");
 	present(CHILD_ID_VOLTS, S_MULTIMETER, "Battery");
-	present(254, S_CUSTOM, "Diagnostic");
+	present(254, S_CUSTOM, myVals.c_str());
 	metric = getControllerConfig().isMetric;
 }
 
 void setup(){
-	SLEEP_TIME = (unsigned long)(loadState(7)) * 10000;
-
 	pinMode(ANALOGSENSORS_VCC_PIN, OUTPUT); //Pover for analog sensors
 	
 
@@ -76,6 +86,13 @@ void setup(){
 	Serial.println("--------------------------------");
 	Serial.print("SLEEP_TIME ");
 	Serial.println(SLEEP_TIME);
+	Serial.print("scale_constant ");
+	Serial.println(scale_constant);
+	Serial.print("temp1cor ");
+	Serial.println(temp1cor);
+	Serial.print("temp2cor ");
+	Serial.println(temp2cor);
+	Serial.println("--------------------------------");
 #endif
 }
 
@@ -85,21 +102,19 @@ void loop()
 	float Temperature1, Temperature2(NAN), Humidity(NAN), Pressure(NAN);
 	int volts;
 
-
-	//volts = getBandgap(); 
 	volts = readVcc();
 	send(msgVolts.set(volts, 2));
-	volts = min(volts, 310); // 310 - max Volts
-	batteryPcnt = (volts - 180) * 100 / 130;  //180 - min Volts; 130 - delta
+	batteryPcnt = (min(volts, 310) - 180) * 100 / 130;  //180 - min Volts; 130 - delta
 
 	digitalWrite(ANALOGSENSORS_VCC_PIN, HIGH);
-	wait(1000);
-	Temperature1 = readTermoRez();
+	wait(500); //1000
+	Temperature1 = readTermoRez()+ temp1cor;
 	Moisture=readMoisture();
 	//digitalWrite(ANALOGSENSORS_VCC_PIN, LOW);
 	bme.read(Pressure, Temperature2, Humidity, metric, true);
 	wait(10);
 	bme.read(Pressure, Temperature2, Humidity, metric, true);
+	Temperature2 += temp2cor;
 
 	if (Temperature1 != preTemperature1){
 		send(msgTemp1.set(Temperature1, 1));
@@ -156,6 +171,22 @@ void receive(const MyMessage &message) {
 	int newsleep;
 	switch (message.type) {
 		case V_VAR1: //Voltage
+			scale_constant = message.getLong();
+			saveState(0, (byte)(scale_constant & 0xFF));
+			saveState(1, (byte)((scale_constant >> 8) & 0xFF));
+			saveState(2, (byte)((scale_constant >> 16) & 0xFF));
+			saveState(3, (byte)((scale_constant >> 24) & 0xFF));
+			send(msgDiagnostic.set((uint32_t)scale_constant));
+			break;
+		case V_VAR2: //temp1 
+			temp1cor = message.getFloat();
+			saveState(5, (int)(temp1cor * 10 - 128));
+			send(msgDiagnostic.set(temp1cor, 2));
+			break;
+		case V_VAR3: //temp2
+			temp2cor = message.getFloat();
+			saveState(6, (int)(temp2cor * 10 - 128));
+			send(msgDiagnostic.set(temp2cor, 2));
 			break;
 		case V_VAR4: //V_VAR3 * 10000 - SLEEP_TIME, mls
 			newsleep = message.getInt();
@@ -202,35 +233,17 @@ float analog_average(uint8_t sensor) {
 	average = average / NUMSAMPLES;
 	return average;
 }
-int getBandgap() {
-	// REFS0 : Selects AVcc external reference
-	// MUX3 MUX2 MUX1 : Selects 1.1V (VBG)  
-	ADMUX = bit(REFS0) | bit(MUX3) | bit(MUX2) | bit(MUX1);
-	ADCSRA |= bit(ADSC);  // start conversion
-	while (ADCSRA & bit(ADSC))
-	{
-	}  // wait for conversion to complete
-	int results = (((InternalReferenceVoltage * 1024) / ADC) + 5) / 10;
-	return results;
-} 
 
 int readVcc() {
 	// Read 1.1V reference against AVcc
 	// set the reference to Vcc and the measurement to the internal 1.1V reference
 	ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-
 	delay(2); // Wait for Vref to settle
 	ADCSRA |= _BV(ADSC); // Start conversion
 	while (bit_is_set(ADCSRA, ADSC)); // measuring
-
 	uint8_t low = ADCL; // must read ADCL first - it then locks ADCH  
 	uint8_t high = ADCH; // unlocks both
-
 	long result = (high << 8) | low;
-
-	result = 110264L / result; // Calculate Vcc (in mV); 1125300 = 1.1*1023*100
-	//result = scale_constant / result; // Calculate Vcc (in mV); 
+	result = scale_constant / result; // Calculate Vcc (in mV/10); 112530 = 1.1*1023*10	//result = scale_constant / result; // Calculate Vcc (in mV); 
 	return (int)result; // Vcc in millivolts
-	
-
 }
