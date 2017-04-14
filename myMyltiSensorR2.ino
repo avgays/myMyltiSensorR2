@@ -1,8 +1,8 @@
-//#define MY_OTA_FIRMWARE_FEATURE
+#define MY_OTA_FIRMWARE_FEATURE
 #define MY_RADIO_NRF24 // Enable and select radio type attached 
 #define MY_RF24_PA_LEVEL RF24_PA_LOW
 #define MY_BAUD_RATE 9600
-#define MY_DEBUG 
+//#define MY_DEBUG 
 
 #include <MySensors.h>
 #include <Wire.h>
@@ -16,6 +16,7 @@
 #define CHILD_ID_HUM 12
 #define CHILD_ID_PRE 13
 #define CHILD_ID_VOLTS 250
+#define CHILD_ID_VOLTS2 251
 
 #define ANALOGSENSORS_VCC_PIN  A1 //Pover for analog sensors
 
@@ -37,6 +38,7 @@ MyMessage msgHum2(CHILD_ID_HUM, V_HUM);
 MyMessage msgTemp2(CHILD_ID_TEMP2, V_TEMP);
 MyMessage msgPress(CHILD_ID_PRE, V_PRESSURE);
 MyMessage msgVolts(CHILD_ID_VOLTS, V_VOLTAGE);
+MyMessage msgVolts2(CHILD_ID_VOLTS2, V_VOLTAGE);
 MyMessage msgDiagnostic(254, V_CUSTOM);
 
 
@@ -70,6 +72,7 @@ void presentation() {
 	present(CHILD_ID_HUM, S_HUM, "Air");
 	present(CHILD_ID_PRE, S_BARO, "Air");
 	present(CHILD_ID_VOLTS, S_MULTIMETER, "Battery");
+	present(CHILD_ID_VOLTS2, S_MULTIMETER, "Battery2");
 	present(254, S_CUSTOM, myVals.c_str());
 	metric = getControllerConfig().isMetric;
 }
@@ -100,17 +103,21 @@ void loop()
 {
 	int Moisture, batteryPcnt; //Ground
 	float Temperature1, Temperature2(NAN), Humidity(NAN), Pressure(NAN);
-	int volts;
+	int volts, volts2;
 
 	volts = readVcc();
 	send(msgVolts.set(volts, 2));
 	batteryPcnt = (min(volts, 310) - 180) * 100 / 130;  //180 - min Volts; 130 - delta
+	volts2= volts*analog_average(BATTERYSENSORPIN)/1023;
+	send(msgVolts2.set(volts2, 2));
 
 	digitalWrite(ANALOGSENSORS_VCC_PIN, HIGH);
 	wait(500); //1000
+
 	Temperature1 = readTermoRez()+ temp1cor;
 	Moisture=readMoisture();
-	//digitalWrite(ANALOGSENSORS_VCC_PIN, LOW);
+	digitalWrite(ANALOGSENSORS_VCC_PIN, LOW);
+	wait(500);
 	bme.read(Pressure, Temperature2, Humidity, metric, true);
 	wait(10);
 	bme.read(Pressure, Temperature2, Humidity, metric, true);
@@ -159,6 +166,8 @@ void loop()
 	Serial.println("%");
 	Serial.print("Volts = ");
 	Serial.println(volts);
+	Serial.print("Volts2 = ");
+	Serial.println(volts2);
 	Serial.print("batteryPcnt = ");
 	Serial.print(batteryPcnt);
 	Serial.println("%");
