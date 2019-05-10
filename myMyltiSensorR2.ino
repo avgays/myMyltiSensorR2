@@ -1,4 +1,4 @@
-#define MY_OTA_FIRMWARE_FEATURE
+//NO for MYSBOOTLOADER  #define MY_OTA_FIRMWARE_FEATURE
 #define MY_RADIO_NRF24 // Enable and select radio type attached 
 #define MY_RF24_PA_LEVEL RF24_PA_LOW
 #define MY_BAUD_RATE 9600
@@ -23,6 +23,7 @@
 #define BATTERYSENSORPIN A0
 #define MOISTUREPIN A3
 #define THERMISTORPIN A2
+#define LEDPIN 8
 
 
 #define SERIESRESISTOR 9930 //R of second resistor 10000
@@ -61,11 +62,8 @@ void presentation() {
 	scale_constant = ((long)(loadState(2) * 256L) + loadState(1)) * 256 + loadState(0); //112530L;
 	temp1cor = (float)(loadState(5) - 128) / 10;
 	temp2cor = (float)(loadState(6) - 128) / 10;
-
 	myVals = "1|" + String(scale_constant) + "|" + String(temp1cor, 1) + "|" + String(temp2cor, 1) + "|" + SLEEP_TIME;
-
-
-	sendSketchInfo("MyltiSensor 1MHz", "0.5");
+	sendSketchInfo("MyltiSensor 1MHz", "0.8");
 	present(CHILD_ID_TEMP1, S_TEMP, "Ground");
 	present(CHILD_ID_MOISTURE, S_HUM, "Ground");
 	present(CHILD_ID_TEMP2, S_TEMP, "Air");
@@ -79,15 +77,19 @@ void presentation() {
 
 void setup(){
 	pinMode(ANALOGSENSORS_VCC_PIN, OUTPUT); //Pover for analog sensors
-	
-
+	pinMode(LEDPIN, OUTPUT);
 	while (!bme.begin()) {
+	#ifdef MY_DEBUG
 		Serial.println("Could not find BME280I2C sensor!");
-		delay(1000);
+	#endif
+		wait(1000);
 	}
+	digitalWrite(LEDPIN, HIGH);
+	wait(10000);
+	digitalWrite(LEDPIN, LOW);
 #ifdef MY_DEBUG
 	Serial.println("--------------------------------");
-	Serial.print("SLEEP_TIME ");
+	Serial.print("SLEEP_TIME1 ");
 	Serial.println(SLEEP_TIME);
 	Serial.print("scale_constant ");
 	Serial.println(scale_constant);
@@ -106,47 +108,52 @@ void loop()
 	int volts, volts2;
 
 	volts = readVcc();
-	send(msgVolts.set(volts, 2));
 	batteryPcnt = (min(volts, 310) - 180) * 100 / 130;  //180 - min Volts; 130 - delta
+	send(msgVolts.set((float)volts/100, 2));
 	volts2= volts*analog_average(BATTERYSENSORPIN)/1023;
-	send(msgVolts2.set(volts2, 2));
-
+	send(msgVolts2.set((float)volts2/100, 2));
 	digitalWrite(ANALOGSENSORS_VCC_PIN, HIGH);
+	digitalWrite(LEDPIN, HIGH);
 	wait(500); //1000
-
+	digitalWrite(LEDPIN, LOW);
 	Temperature1 = readTermoRez()+ temp1cor;
 	Moisture=readMoisture();
 	digitalWrite(ANALOGSENSORS_VCC_PIN, LOW);
+
+	digitalWrite(LEDPIN, HIGH);
 	wait(500);
+	digitalWrite(LEDPIN, LOW);
 	bme.read(Pressure, Temperature2, Humidity, metric, true);
 	wait(10);
 	bme.read(Pressure, Temperature2, Humidity, metric, true);
 	Temperature2 += temp2cor;
 
-	if (Temperature1 != preTemperature1){
+	digitalWrite(LEDPIN, HIGH);
+//	if (Temperature1 != preTemperature1){
 		send(msgTemp1.set(Temperature1, 1));
 		preTemperature1= Temperature1;
-	}
-	if (Moisture != preMoisture) {
+//	}
+//	if (Moisture != preMoisture) {
 		send(msgHum1.set(Moisture));
 		preMoisture=Moisture;
-	}
-	if (Temperature2 != preTemperature2) {
+//	}
+//	if (Temperature2 != preTemperature2) {
 		send(msgTemp2.set(Temperature2, 1));
 		preTemperature2 = Temperature2;
-	}
-	if (Humidity != preHumidity) {
+//	}
+//	if (Humidity != preHumidity) {
 		send(msgHum2.set(Humidity, 0));
 		preHumidity = Humidity;
-	}
-	if (Pressure != prePressure) {
+//	}
+//	if (Pressure != prePressure) {
 		send(msgPress.set(Pressure, 0));
 		prePressure = Pressure;
-	}
+//	}
 //	if (batteryPcnt != prebatteryPcnt) {
 		sendBatteryLevel(batteryPcnt);
 		prebatteryPcnt = batteryPcnt;
 //	}
+	digitalWrite(LEDPIN, LOW);
 	#ifdef MY_DEBUG
 	Serial.println("--------------------------------");
 	Serial.print("Air Temperature1 ");
@@ -173,7 +180,6 @@ void loop()
 	Serial.println("%");
 	Serial.println("--------------------------------");
 	#endif
-
 	smartSleep(SLEEP_TIME);
 }
 void receive(const MyMessage &message) {
